@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    env:
+      MIX_ENV: test
+      GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Minimum supported versions on ubuntu-22.04.
+          # OTP 24.2 is the earliest available on ubuntu-22.04.
+          # Elixir 1.12 is the earliest version compatible with OTP 24.
+          - elixir: "1.12"
+            otp: "24"
+
+          # Latest versions.
+          - elixir: "1.19"
+            otp: "28"
+            lint: lint
+            coverage: coverage
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v6
+
+      - name: Set up Erlang and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{matrix.otp}}
+          elixir-version: ${{matrix.elixir}}
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v5
+        id: cache-deps
+        with:
+          path: |
+            deps
+            _build
+          key: |
+            mix-${{ runner.os }}-${{matrix.elixir}}-${{matrix.otp}}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            mix-${{ runner.os }}-${{matrix.elixir}}-${{matrix.otp}}-
+
+      - run: mix do deps.get --check-locked, deps.compile
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+
+      - run: mix format --check-formatted
+        if: ${{ matrix.lint }}
+
+      - run: mix deps.unlock --check-unused
+        if: ${{ matrix.lint }}
+
+      - run: mix compile --warnings-as-errors
+        if: ${{ matrix.lint }}
+
+      - run: mix test
+        if: ${{!matrix.coverage}}
+
+      - run: mix coveralls.github
+        if: ${{matrix.coverage}}
